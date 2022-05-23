@@ -1,12 +1,13 @@
 from flask import Flask, request
 import hashlib
+import json
 import string
 import time
 import random
 import binascii
 app = Flask(__name__)
 
-NUM_BITS = 34
+NUM_BITS = 4
 HASH_MASK = int("1"*NUM_BITS, 2)
 HASH_LENGTH = NUM_BITS//8 + bool(NUM_BITS%8)
 SEED_LENGTH = 8
@@ -76,15 +77,17 @@ class Coins:
             hashfile.write(str(state["time"]) + "\n")
 
     def sanitise(self, name):
-        return "".join([s for s in name.lower() if s in string.ascii_lowercase])
+        return "".join([s for s in name.lower() if s in string.ascii_lowercase or s.isdigit()])
 
 @app.route("/api")
 def api():
     state = hasher.get_current_state()
     state.update({"bitmask":NUM_BITS})
-    state["seed"] = hex(int.from_bytes(state["seed"], "big"))[2:]
-    state["hash"] = hex(int.from_bytes(state["hash"], "big"))[2:]
-    return f"{state}"
+    #state["seed"] = hex(int.from_bytes(state["seed"], "big"))[2:]
+    state['seed'] = hex_representation(state['seed']).replace(' ','')
+    #state["hash"] = hex(int.from_bytes(state["hash"], "big"))[2:]
+    state['hash'] = hex_representation(state['hash']).replace(' ','')
+    return json.dumps(state)
 
 @app.route("/index.css")
 def css():
@@ -106,35 +109,37 @@ def get_ledger():
     db = []
     with open("database.csv","r") as database:
         for line in database:
+            #print(line)
             if line.strip():
                 db.append(line.strip().split(","))
     users = {}
-    for line in db[1:]:
+    for line in db[0:]:
         user = coins.sanitise(line[0])
         if user not in users:
             users[user] = 1
         else:
             users[user] += 1
     retval = "<table><tr><th>User</th><th>Coins</th>"
+    #print(users)
     for user in users:
         retval += f"<tr><td>{user}</td><td>{users[user]}</td></tr>"
     retval += "</table>"
     return retval
 
 
-@app.route('/', methods=["GET","POST"])
+@app.route('/', methods=["GET"])
 def hello_world():
     message = "<p> Have a guess please! </p>"
     state = hasher.get_current_state()
-    if request.method == "POST":
-        token = hasher.validate(request.form['word'])
+    if request.args.get('word') != None and request.args.get('username') != None:
+        token = hasher.validate(request.args['word'])
         if token["success"]:
-            coins.add_coin(request.form['username'], request.form['word'],
+            coins.add_coin(request.args['username'], request.args['word'],
                            token["state"])
             message = "<p> Good job! </p>"
         else:
             message = f"""<p> That's not right! You hashed to:
-                {hasher.make_hash(state['seed'],request.form['word'])}</p>"""
+                {hasher.make_hash(state['seed'],request.args['word'])}</p>"""
     message += "<p> See the <a href='/ledger'>ledger</a></p>"
     return f"""<link type="text/css" rel="stylesheet" href="index.css">
         <div align="center">
@@ -144,8 +149,9 @@ def hello_world():
         {NUM_BITS} bits.</p><br><br>
         <p>The hash is: {hex_representation(state['hash'])}</p>
         <p> The prepended random bytes are: {hex_representation(state['seed'])}
+        <p>Check the above info in json format at the <a href=/api>/api</a></p>
         </p>
-         {message} <br><form action="/" method="post"> <p>What is a hex value
+         {message} <br><form action="/" method="get"> <p>What is a hex value
         that hashes to this value?</p>
         <input id="word" name="word" type="text"></input>
         <p>What is your username?</p> <input type="text" name="username"
